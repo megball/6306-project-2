@@ -1,0 +1,65 @@
+---
+title: "Project2_Rmd"
+author: "Megan Ball"
+date: "11/18/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#load packages
+library(dplyr)
+library(readr)
+library(gt)
+library(summarytools)
+```
+
+# Load the Data 
+```{r}
+df <- read_csv(here::here("data", "CaseStudy2-data.csv"))
+
+# Check for missing values
+tibble(variable = names(colSums(is.na(df))),
+       missing = colSums(is.na(df))) %>% 
+  gt() %>% 
+  tab_header(title = "Missing Values in Data") 
+
+#remove ID
+df <- df %>% select(-c(ID))
+
+```
+
+
+
+```{r}
+
+#summarize data
+summary(df)
+print(dfSummary(df, graph.magnif = 0.75), method = 'browser')
+str(df)
+
+```
+
+Comments on the data:
+-Investigate employee count- it has only one distinct value
+-Monthly income is skewed, as is expected with most income data
+-Over18 is all Y, so may remove the column as it is not useful data
+-Standard Hours is all 80, so may also remove this column
+-Investigate monthly income values, $19,999 seems pretty high for the max
+
+# Exploratory Data Analysis
+
+```{r include=FALSE}
+df$EmployeeCount
+
+#remove unnecessary values, employee count, over18, and standard hours
+df <- df %>% select(-c(EmployeeCount, Over18, StandardHours))
+
+```
+We are now down to 32 variables instead of original 35 by removing ones that contribute no value.
+
+```{r}
+
+```
+
