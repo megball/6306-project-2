@@ -14,6 +14,10 @@ library(readr)
 library(gt)
 library(summarytools)
 library(GGally)
+library(caret)
+library(e1071)
+library(class)
+library(DMwR)
 ```
 
 # Load the Data 
@@ -40,6 +44,8 @@ summary(df)
 print(dfSummary(df, graph.magnif = 0.75), method = 'browser')
 str(df)
 
+summary(df$StandardHours)
+
 ```
 
 Comments on the data:
@@ -58,6 +64,18 @@ df[sapply(df, is.character)] <- lapply(df[sapply(df, is.character)],
 str(df)
 ```
 
+Even though Education, EnvironmentSatisfaction, JobInvolvement, JobLevel, JobSatisfaction, PerformanceRating, StockOptionLevel, TrainingTimesLastYear, and WorkLifeBalance are all numeric, they all have distinct levels and therefore should be considered as factors and not continuous numeric variables.
+
+```{r}
+#update other groups to factors
+cols <- c("Education", "EnvironmentSatisfaction", "JobInvolvement","JobLevel","JobSatisfaction","PerformanceRating","StockOptionLevel","TrainingTimesLastYear","WorkLifeBalance","NumCompaniesWorked","RelationshipSatisfaction")
+
+df[cols] <- lapply(df[cols], factor) 
+
+str(df)
+print(dfSummary(df, graph.magnif = 0.75), method = 'browser')
+```
+
 # Exploratory Data Analysis
 
 ```{r include=FALSE}
@@ -72,25 +90,286 @@ df <- df %>% select(-c(EmployeeCount, Over18, StandardHours))
 
 We are now down to 32 variables instead of original 35 by removing ones that contribute no value.
 
-```{r}
+```{r echo=FALSE}
 #Explore relationships with scatterplot matrix
 
 #continuous variables only
 df.numeric <- df[ , sapply(df, is.numeric)]
-#add back in Attrition
-df.numeric <- cbind(df.numeric, df$Attrition)
-ggpairs(df.numeric, aes(colour=df$Attrition))
 
+#start with corrplot since there are so many variables
+ggcorr(df.numeric)
 ```
 
 ```{r}
-#categorial variables only
-df.cat <- df[, sapply(df, is.factor)]
+#plot the highest correlation variables to investigate further
 
-ggpairs(df.cat, aes(colour=Attrition))
+df %>% ggplot(aes(x= Age, y = YearsAtCompany, colour = Attrition)) +
+  geom_point()
+
+df %>% ggplot(aes(x= Age, y = YearsAtCompany, colour = MonthlyIncome)) +
+  geom_point()
+
+df %>% ggplot(aes(x= MonthlyIncome, y = TotalWorkingYears, colour = Attrition)) +
+  geom_point()
+
+df %>% ggplot(aes(x= MonthlyIncome, y = TotalWorkingYears, colour = MonthlyIncome)) +
+  geom_point()
+
+df %>% ggplot(aes(x= TotalWorkingYears, y = YearsAtCompany, colour = Attrition)) +
+  geom_point()
+
+
+df %>% ggplot(aes(x= TotalWorkingYears, y = YearsAtCompany, colour = MonthlyIncome)) +
+  geom_point()
+
+```
+
+All of the data including years in the role, total working years, etc show high correlations as to be expected. However, these also seem to be valuable predictors in determining attrition and monthly income so do not want to remove them at this time.
+
+```{r}
+#look at attrition by job level and job role
+df %>% 
+    group_by(JobLevel) %>% 
+    count(Attrition) %>% 
+    mutate(prop = n/sum(n)) %>% 
+    ggplot(aes(x = JobLevel, y = prop)) +
+    geom_col(aes(fill = Attrition), position = "dodge") +
+    geom_text(aes(label = scales::percent(prop), 
+                  y = prop, 
+                  group = Attrition),
+              position = position_dodge(width = 0.9),
+              vjust = 1.5) +
+  ggtitle("Attrition Rates by Job Level") +
+  ylab("Proportion")
+
+df %>% 
+    group_by(JobRole) %>% 
+    count(Attrition) %>% 
+    mutate(prop = n/sum(n)) %>% 
+    ggplot(aes(x = JobRole, y = prop)) +
+    geom_col(aes(fill = Attrition), position = "dodge") +
+    geom_text(aes(label = scales::percent(prop), 
+                  y = prop, 
+                  group = Attrition),
+              position = position_dodge(width = 0.9),
+              vjust = 1.5) +
+  coord_flip() +
+  ggtitle("Attrition Rates by Job Role") +
+  ylab("Proportion")
+```
+
+As expected, the earlier you are in your career, the higher the attrition rate. It is interesting to note that job level 4 has the lowest attrition rate of all the levels at only 5%.
+
+Sales representatives have by far the highest attrition rate at almost half, 45.28%. Research Directors and Research Scientists are lowest at 1.96% and 2.30% respectively.
+
+```{r}
+#Check attrition and salary by education level
+df %>% 
+    group_by(Education) %>% 
+    count(Attrition) %>% 
+    mutate(prop = n/sum(n)) %>% 
+    ggplot(aes(x = Education, y = prop)) +
+    geom_col(aes(fill = Attrition), position = "dodge") +
+    geom_text(aes(label = scales::percent(prop), 
+                  y = prop, 
+                  group = Attrition),
+              position = position_dodge(width = 0.9),
+              vjust = 1.5) +
+  ggtitle("Attrition Rates by Education") +
+  ylab("Proportion")
+
+df %>% ggplot(aes(x = Education, y = MonthlyIncome, fill = Education)) +
+  geom_boxplot() +
+  ggtitle("Monthly Income Based on Education Level")
+
+
+```
+
+Attrition seems to be independent of education level, although it decreases slightly with post-graduate levels. Monthly Income also does not change significantly until you reach the post-graduate level as well.
+
+```{r}
+#plot hourly rate vs monthly income - corrplot didn't show correlation which is odd
+
+df %>%
+  ggplot(aes(x = HourlyRate, y = MonthlyIncome)) +
+  geom_point() +
+  ggtitle("Monthly Income vs Hourly Rate")
+
+```
+This relationship is very odd. You would expect the monthly income to increase the same as hourly rate, given that our data reported standard hours as 80 for each data row. Suspect this is related to if you worked overtime or not.
+
+```{r}
+#check monthly rate and monthly income
+
+df %>%
+  ggplot(aes(x = MonthlyRate, y = MonthlyIncome)) +
+  geom_point() +
+  ggtitle("Monthly Income vs Monthly Rate")
+
+
 ```
 ```{r}
-#Need to look at one by one
+#check attrition based on monthly income
+df %>%
+  ggplot(aes(x = Attrition, y = MonthlyIncome, fill = Attrition)) +
+  geom_boxplot() +
+  ggtitle("Attrition and Monthly Income")
+```
 
+Lower monthly incomes are associated with more attrition.
+
+```{r}
+#look at attrition by years since last promotion
+df %>% 
+    group_by(YearsSinceLastPromotion) %>% 
+    count(Attrition) %>% 
+    mutate(prop = n/sum(n)) %>% 
+    ggplot(aes(x = YearsSinceLastPromotion, y = prop)) +
+    geom_col(aes(fill = Attrition), position = "dodge") +
+    geom_text(aes(label = scales::percent(prop), 
+                  y = prop, 
+                  group = Attrition),
+              position = position_dodge(width = 0.9),
+              vjust = 1.5) +
+  ggtitle("Attrition Rates by Years Since Last Promotion") +
+  ylab("Proportion")
+
+```
+
+Not a whole lot of variation between years but definitely some, and higher attrition rates if it's been > 5-8 years since the last promition.
+
+```{r}
+#look at attrition by work/life balance
+df %>% 
+    group_by(WorkLifeBalance) %>% 
+    count(Attrition) %>% 
+    mutate(prop = n/sum(n)) %>% 
+    ggplot(aes(x = WorkLifeBalance, y = prop)) +
+    geom_col(aes(fill = Attrition), position = "dodge") +
+    geom_text(aes(label = scales::percent(prop), 
+                  y = prop, 
+                  group = Attrition),
+              position = position_dodge(width = 0.9),
+              vjust = 1.5) +
+  ggtitle("Attrition Rates by Work/Life Balance") +
+  ylab("Proportion")
+
+```
+Assuming that 1 is bad work/life balance, it would make sense to see higher attrition rates for this variable.
+
+Before going into our model building, the top three variables that seem to indicate attrition are:
+- Work/Life Balance
+- Job Level
+- Monthly Income
+
+# Standardize Data for KNN
+```{r}
+#create standardized data set to run specifically for knn
+
+df.std <- df %>%
+    mutate_if(is.numeric, scale)
+
+```
+
+
+
+# Create Test/Train Splits
+
+```{r}
+#data set is pretty small at only 870 obs, complete 80/20 splits
+
+# set random seed
+set.seed(123) 
+# create the training partition that is 80% of total obs
+inTraining <- createDataPartition(df$Attrition, p=0.8, list=FALSE)
+# create training/testing dataset
+trainSet <- df[inTraining,]   
+testSet <- df[-inTraining,]   
+# verify number of obs 
+nrow(trainSet)
+nrow(testSet) 
+
+head(trainSet)
+head(testSet)
+
+#check how many "Yes" attrition in train & test
+summary(trainSet$Attrition)
+summary(testSet$Attrition)
+   
+```
+
+# KNN Model
+
+```{r}
+#loop to find optimal k
+
+accs <- data.frame(accuracy = numeric(20), k = numeric(20))
+
+#make numeric only train and test as knn can only run on continuous variables
+trainNum <- trainSet[ , sapply(trainSet, is.numeric)]
+#add back Attrition
+trainNum <- cbind(trainNum,trainSet$Attrition)
+names(trainNum)[names(trainNum)=="trainSet$Attrition"] <- "Attrition"
+
+testNum <- testSet[ , sapply(testSet, is.numeric)]
+#add back Attrition
+testNum <- cbind(testNum,testSet$Attrition)
+names(testNum)[names(testNum)=="testSet$Attrition"] <- "Attrition"
+
+for(i in 1:20)
+{
+  classifications <- kNN(Attrition ~ .,trainNum,testNum,norm=T,prob = TRUE, k = i)
+  table(testNum$Attrition,classifications)
+  CM <- confusionMatrix(table(testNum$Attrition,classifications))
+  accs$accuracy[i] = CM$overall[1]
+  accs$k[i] = i
+}
+
+plot(accs$k,accs$accuracy, type = "l", xlab = "k")
+accs
+
+```
+
+# Run KNN
+```{r}
+#k=5 had good accuracy, run model with k=5 and check sensitivity and specificity on test set
+
+classifications <- kNN(Attrition ~ .,trainNum,testNum,norm=T,prob = TRUE, k = 5)
+table(testNum$Attrition,classifications)
+CM <- confusionMatrix(table(testNum$Attrition,classifications))
+CM
+```
+
+We have overall accuracy at 84.5%, sensitivity at 86%, and specificity at 55%. Try again with k = 7
+
+```{r}
+classifications <- kNN(Attrition ~ .,trainNum,testNum,norm=T,prob = TRUE, k = 7)
+table(testNum$Attrition,classifications)
+CM <- confusionMatrix(table(testNum$Attrition,classifications))
+CM
+
+
+```
+
+Specificity is even worse. Let's move to Naive Bayes which will use all variables, not just the continuous ones.
+
+# Naive Bayes Classifier
+
+```{r}
+#run model
+NB1 = naiveBayes(Attrition~ .,data = trainSet)
+summary(NB1)
+
+#predict on the test set
+pred1 <- predict(NB1,testSet)
+
+#confusion matrix
+confusionMatrix(table(predict(NB1,testSet),testSet$Attrition))
+
+```
+
+Our Naive Bayes classifier performs better (as expected, since it includes all of the variables and not just the continuous ones). Overall accuracy is 85% with sensitivity at 89% and specificity at 64%.
+
+```{r}
 
 ```
