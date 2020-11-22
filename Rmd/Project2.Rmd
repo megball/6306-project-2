@@ -13,6 +13,7 @@ library(dplyr)
 library(readr)
 library(gt)
 library(summarytools)
+library(GGally)
 ```
 
 # Load the Data 
@@ -42,24 +43,54 @@ str(df)
 ```
 
 Comments on the data:
--Investigate employee count- it has only one distinct value
--Monthly income is skewed, as is expected with most income data
--Over18 is all Y, so may remove the column as it is not useful data
--Standard Hours is all 80, so may also remove this column
--Investigate monthly income values, $19,999 seems pretty high for the max
+- Investigate employee count- it has only one distinct value
+- Monthly income is skewed, as is expected with most income data
+- Over18 is all Y, so may remove the column as it is not useful data
+- Standard Hours is all 80, so may also remove this column
+- Investigate monthly income values, $19,999 seems pretty high for the max
+- There are no missing values in the data
+
+```{r}
+#update all characters to factors
+df[sapply(df, is.character)] <- lapply(df[sapply(df, is.character)], 
+                                       as.factor)
+
+str(df)
+```
 
 # Exploratory Data Analysis
 
 ```{r include=FALSE}
 df$EmployeeCount
+```
 
+
+```{r}
 #remove unnecessary values, employee count, over18, and standard hours
 df <- df %>% select(-c(EmployeeCount, Over18, StandardHours))
-
 ```
+
 We are now down to 32 variables instead of original 35 by removing ones that contribute no value.
 
 ```{r}
+#Explore relationships with scatterplot matrix
+
+#continuous variables only
+df.numeric <- df[ , sapply(df, is.numeric)]
+#add back in Attrition
+df.numeric <- cbind(df.numeric, df$Attrition)
+ggpairs(df.numeric, aes(colour=df$Attrition))
 
 ```
 
+```{r}
+#categorial variables only
+df.cat <- df[, sapply(df, is.factor)]
+
+ggpairs(df.cat, aes(colour=Attrition))
+```
+```{r}
+#Need to look at one by one
+
+
+```
