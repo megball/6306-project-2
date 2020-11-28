@@ -584,10 +584,10 @@ Let's try a Random Forest classifier which will also tell us variable importance
 
 # Random Forest
 
-```{r}
+```{r echo = FALSE}
 #run Random Forest using caret and cross validation
 
-rfGrid <- expand.grid(mtry=c(1, 5, 10, 50, 100, 250, 500))
+rfGrid <- expand.grid(mtry=c(10, 50, 100, 250, 500))
 
 rfControl <- trainControl(method="repeatedcv",
                           number=10,
@@ -602,11 +602,13 @@ fitRF <- train(Attrition ~.,
                tuneGrid = rfGrid,
                metric='ROC')
 
+```
+```{r}
 fitRF
 
 varImp(fitRF)
-
 ```
+
 Re-run Naive Bayes with top 10 variables per Random Forest model.
 
 ```{r}
@@ -627,16 +629,152 @@ confusionMatrix(table(predict(NB3,testSet),testSet$Attrition))
 #check for different cut off for better performance
 preds_nb3 <- as.data.frame(pred3)
 
-preds_nb3 <- prediction(preds_nb3[,1],testSet$Attrition)
+preds_nb3 <- prediction(preds_nb3[,2],testSet$Attrition)
 roc.perf_nb3 = performance(preds_nb3, measure = "tpr", x.measure = "fpr")
 auc.train_nb3 <- performance(preds_nb3, measure = "auc")
 auc.train_nb3 <- auc.train_nb3@y.values
 plot(roc.perf_nb3, colorize = TRUE)
 ```
 
+Let's stick with our best model for classification: Naive Bayes with all variables and cutoff of 0.4.
+
+### Save Classification Model
+```{r echo = FALSE}
+
+final_class <- NB1
+
+```
+
+Let's move on to creating a linear regression model to predict monthly income.
 
 
 # Linear Regression for Monthly Salary
+
+```{r}
+#first pass model with all variables
+
+linear1 <- lm(MonthlyIncome ~., data = trainSet)
+summary(linear1)
+
+```
+Our linear regression model using all variables gives an Adj R-squared of 0.95 and RMSE of $1019. 
+
+```{r}
+pred_linear1 <- predict(linear1, newdata = testSet)
+postResample(testSet$MonthlyIncome,pred_linear1)
+
+```
+
+Our test set performance is also equally good. However, these values make me suspect some over-fitting of the data. Let's check residuals.
+
+```{r}
+plot(linear1)
+```
+
+Residuals look OK, but we know that MonthlyIncome is skewed. Let's re-run with log transform to see if our residuals look better. However, we are building this purely as a predictive model, so meeting our assumptions is not really important versus if we were developing a purely explanatory model.
+
+```{r}
+
+linear2 <- lm(log(MonthlyIncome) ~., data = trainSet)
+summary(linear2)
+
+```
+
+Our R-squared decreases a bit, and we have to recalculate our RMSE since it's on the log scale, but let's check residuals.
+
+```{r}
+plot(linear2)
+
+```
+
+Residuals look a little better. Since our goal is prediction, let's proceed with this model including all variables as it yields good performance.
+
+
+```{r}
+#predict on test set and check performance
+predict_lm <- predict(linear2, newdata = testSet)
+
+postResample(exp(predict_lm), testSet$MonthlyIncome)
+```
+
+We have good performance on our test set as well, with RMSE < $3000 at $1123 and our Rsquared at 0.929. 
+
+### Save Linear Model
+
+```{r}
+final_linear <- linear2
+```
+
+# Make and Save Predictions
+
+## Attrition Classifier
+```{r}
+#load in data
+attrition <- read_csv(here::here("data", "CaseStudy2CompSet No Attrition.csv"))
+
+#pre-process to match training set
+
+# Check for missing values
+tibble(variable = names(colSums(is.na(attrition))),
+       missing = colSums(is.na(attrition))) %>% 
+  gt() %>% 
+  tab_header(title = "Missing Values in Data") 
+
+#have to keep ID in for our prediction comparison, will exclude when running model
+
+```
+
+```{r}
+#update all characters to factors
+attrition[sapply(attrition, is.character)] <- lapply(attrition[sapply(attrition, is.character)], 
+                                       as.factor)
+
+str(attrition)
+```
+
+```{r}
+
+#update other groups to factors
+attrition[cols] <- lapply(attrition[cols], factor) 
+
+#str(attrition)
+```
+
+```{r}
+attrition$Education <- factor(attrition$Education, ordered = TRUE)
+attrition$EnvironmentSatisfaction <- factor(attrition$EnvironmentSatisfaction, ordered = TRUE)
+attrition$JobLevel <- factor(attrition$JobLevel, ordered = TRUE)
+attrition$JobSatisfaction <- factor(attrition$JobSatisfaction, ordered = TRUE)
+attrition$PerformanceRating <- factor(attrition$PerformanceRating, ordered = TRUE)
+attrition$RelationshipSatisfaction <- factor(attrition$RelationshipSatisfaction, ordered = TRUE)
+attrition$WorkLifeBalance <- factor(attrition$WorkLifeBalance, ordered = TRUE)
+
+#str(attrition)
+```
+
+
+```{r}
+#remove unnecessary values, employee count, over18, and standard hours
+attrition <- attrition %>% dplyr::select(-c(EmployeeCount, Over18, StandardHours, EmployeeNumber))
+```
+
+## Run model
+```{r}
+#predict on test set and check performance
+predict_attrition <- predict(final_class, newdata = attrition[,2:31])
+
+#join back to original dataset
+attrition <- attrition %>% mutate(Attrition = predict_attrition)
+
+#remove all columns except ID
+attrition <- attrition %>% select(c("ID","Attrition"))
+
+#save file
+Case2PredictionsBall_Attrition  <- write.csv(attrition, "data/Case2PredictionsBall_Attrition.csv", row.names = FALSE)
+```
+
+
+## Salary Predictor
 
 ```{r}
 
