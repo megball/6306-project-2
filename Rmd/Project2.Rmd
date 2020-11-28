@@ -18,6 +18,7 @@ library(caret)
 library(e1071)
 library(class)
 library(DMwR)
+library(ROCR)
 ```
 
 # Load the Data 
@@ -31,7 +32,7 @@ tibble(variable = names(colSums(is.na(df))),
   tab_header(title = "Missing Values in Data") 
 
 #remove ID
-df <- df %>% select(-c(ID))
+df <- df %>% dplyr::select(-c(ID))
 
 ```
 
@@ -74,8 +75,22 @@ df[cols] <- lapply(df[cols], factor)
 
 str(df)
 print(dfSummary(df, graph.magnif = 0.75), method = 'browser')
+
 ```
 
+We actually want a few to be ordered factors as they are ratings.
+
+```{r}
+df$Education <- factor(df$Education, ordered = TRUE)
+df$EnvironmentSatisfaction <- factor(df$EnvironmentSatisfaction, ordered = TRUE)
+df$JobLevel <- factor(df$JobLevel, ordered = TRUE)
+df$JobSatisfaction <- factor(df$JobSatisfaction, ordered = TRUE)
+df$PerformanceRating <- factor(df$PerformanceRating, ordered = TRUE)
+df$RelationshipSatisfaction <- factor(df$RelationshipSatisfaction, ordered = TRUE)
+df$WorkLifeBalance <- factor(df$WorkLifeBalance, ordered = TRUE)
+
+str(df)
+```
 # Exploratory Data Analysis
 
 ```{r include=FALSE}
@@ -85,10 +100,40 @@ df$EmployeeCount
 
 ```{r}
 #remove unnecessary values, employee count, over18, and standard hours
-df <- df %>% select(-c(EmployeeCount, Over18, StandardHours))
+df <- df %>% dplyr::select(-c(EmployeeCount, Over18, StandardHours, EmployeeNumber))
 ```
 
 We are now down to 32 variables instead of original 35 by removing ones that contribute no value.
+
+```{r}
+#check if we need to limit total working years
+boxplot(df$TotalWorkingYears)
+
+```
+Exclude all 'outliers' as we aren't really interested in attrition rate for people that have been working > 30 years, since they are closer to retirement age generally than those working for< 30 years.
+
+```{r}
+df <- df %>% filter(TotalWorkingYears <= 30)
+
+```
+
+We are now down to 845 observations, but it removed some potentially influential outliers. It now limits our scope to employees working 30 or less years.
+
+Let's check what that now has done to our other years variables.
+
+```{r}
+print(dfSummary(df, graph.magnif = 0.75), method = 'browser')
+summary(df)
+```
+
+YearsSinceLastPromotion also looks like it might have some outliers, let's check the boxplot.
+
+```{r}
+boxplot(df$YearsSinceLastPromotion)
+
+```
+
+This seems to be an important variable in determining attrition, so let's leave it in, but we do have quite a few outliers.
 
 ```{r echo=FALSE}
 #Explore relationships with scatterplot matrix
@@ -127,6 +172,25 @@ df %>% ggplot(aes(x= TotalWorkingYears, y = YearsAtCompany, colour = MonthlyInco
 All of the data including years in the role, total working years, etc show high correlations as to be expected. However, these also seem to be valuable predictors in determining attrition and monthly income so do not want to remove them at this time.
 
 ```{r}
+#check distance from home
+
+df %>%
+  ggplot(aes(x = Attrition, y = DistanceFromHome, fill = Attrition)) +
+  geom_boxplot() +
+  ggtitle("Attrition and Distance From Home")
+
+```
+
+It looks like there could be higher attrition with farther home distances, but may not be significantly different. Perform t-test to check.
+
+```{r}
+t.test(DistanceFromHome ~ Attrition, data = df, mu = 0, conf.level = 0.95)
+
+```
+
+With a p-value of 0.015, we do reject the null hypothesis that the true difference in means is equal to 0 for both groups. The mean for the group that is "yes" for attrition is 10.96 miles, whereas the mean for the group that is "no" is 8.99 miles. This does not seem to be a practically significant difference.
+
+```{r}
 #look at attrition by job level and job role
 df %>% 
     group_by(JobLevel) %>% 
@@ -158,9 +222,9 @@ df %>%
   ylab("Proportion")
 ```
 
-As expected, the earlier you are in your career, the higher the attrition rate. It is interesting to note that job level 4 has the lowest attrition rate of all the levels at only 5%.
+As expected, the earlier you are in your career, the higher the attrition rate. It is interesting to note that job level 4 has the lowest attrition rate of all the levels at only 6.52%.
 
-Sales representatives have by far the highest attrition rate at almost half, 45.28%. Research Directors and Research Scientists are lowest at 1.96% and 2.30% respectively.
+Sales representatives have by far the highest attrition rate at almost half, 45.3%. Research Directors and Manufacturing Directors are lowest at 2.3% and 1.2% respectively.
 
 ```{r}
 #Check attrition and salary by education level
@@ -219,6 +283,15 @@ df %>%
 Lower monthly incomes are associated with more attrition.
 
 ```{r}
+#Run t-test to check if statistically significant
+
+t.test(MonthlyIncome ~ Attrition, data = df, mu = 0, conf.level = 0.95)
+
+```
+
+With a p-value of < 0.001, we reject the null hypothesis that the true difference in means of monthly income are equal for those that quit and those that do not. Therefore we can conclude monthly income has some influence on attrition rates.
+
+```{r}
 #look at attrition by years since last promotion
 df %>% 
     group_by(YearsSinceLastPromotion) %>% 
@@ -236,7 +309,7 @@ df %>%
 
 ```
 
-Not a whole lot of variation between years but definitely some, and higher attrition rates if it's been > 5-8 years since the last promition.
+There does not seem to be a single conclusion that can be made for attrition based on years since last promotion.
 
 ```{r}
 #look at attrition by work/life balance
@@ -257,10 +330,49 @@ df %>%
 ```
 Assuming that 1 is bad work/life balance, it would make sense to see higher attrition rates for this variable.
 
-Before going into our model building, the top three variables that seem to indicate attrition are:
+Let's check for business travel.
+
+```{r}
+df %>% 
+    group_by(BusinessTravel) %>% 
+    count(Attrition) %>% 
+    mutate(prop = n/sum(n)) %>% 
+    ggplot(aes(x = BusinessTravel, y = prop)) +
+    geom_col(aes(fill = Attrition), position = "dodge") +
+    geom_text(aes(label = scales::percent(prop), 
+                  y = prop, 
+                  group = Attrition),
+              position = position_dodge(width = 0.9),
+              vjust = 1.5) +
+  ggtitle("Attrition Rates by Amount of Business Travel") +
+  ylab("Proportion")
+```
+No strong conclusions to make about business travel.
+
+```{r}
+#environment satisfaction
+df %>% 
+    group_by(EnvironmentSatisfaction) %>% 
+    count(Attrition) %>% 
+    mutate(prop = n/sum(n)) %>% 
+    ggplot(aes(x = EnvironmentSatisfaction, y = prop)) +
+    geom_col(aes(fill = Attrition), position = "dodge") +
+    geom_text(aes(label = scales::percent(prop), 
+                  y = prop, 
+                  group = Attrition),
+              position = position_dodge(width = 0.9),
+              vjust = 1.5) +
+  ggtitle("Attrition Rates by Environment Satisfaction") +
+  ylab("Proportion")
+```
+
+
+Before going into our model building, the top variables that seem to indicate attrition are:
 - Work/Life Balance
 - Job Level
 - Monthly Income
+- Job Role
+- Environment Satisfaction
 
 # Standardize Data for KNN
 ```{r}
@@ -276,12 +388,12 @@ df.std <- df %>%
 # Create Test/Train Splits
 
 ```{r}
-#data set is pretty small at only 870 obs, complete 80/20 splits
+#data set is pretty small at only 870 obs, complete 70/30 splits and get reasonable amount of YES in each set
 
 # set random seed
-set.seed(123) 
-# create the training partition that is 80% of total obs
-inTraining <- createDataPartition(df$Attrition, p=0.8, list=FALSE)
+set.seed(1) 
+# create the training partition that is 70% of total obs
+inTraining <- createDataPartition(df$Attrition, p=0.7, list=FALSE)
 # create training/testing dataset
 trainSet <- df[inTraining,]   
 testSet <- df[-inTraining,]   
@@ -297,78 +409,234 @@ summary(trainSet$Attrition)
 summary(testSet$Attrition)
    
 ```
+# Test/Train for KNN only
+```{r}
+# set random seed
+set.seed(1) 
+# create the training partition that is 70% of total obs
+inTraining <- createDataPartition(df.std$Attrition, p=0.7, list=FALSE)
+# create training/testing dataset
+trainSet.knn <- df.std[inTraining,]   
+testSet.knn <- df.std[-inTraining,]   
+# verify number of obs 
+nrow(trainSet.knn)
+nrow(testSet.knn) 
+
+#check how many "Yes" attrition in train & test
+summary(trainSet.knn$Attrition)
+summary(testSet.knn$Attrition)
+```
 
 # KNN Model
 
 ```{r}
-#loop to find optimal k
+#loop to find optimal k for sensitivity
 
 accs <- data.frame(accuracy = numeric(20), k = numeric(20))
+sens <- data.frame(sensitivity = numeric(20), k = numeric(20))
 
 #make numeric only train and test as knn can only run on continuous variables
-trainNum <- trainSet[ , sapply(trainSet, is.numeric)]
+trainNum <- trainSet.knn[ , sapply(trainSet.knn, is.numeric)]
 #add back Attrition
-trainNum <- cbind(trainNum,trainSet$Attrition)
-names(trainNum)[names(trainNum)=="trainSet$Attrition"] <- "Attrition"
+trainNum <- cbind(trainNum,trainSet.knn$Attrition)
+names(trainNum)[names(trainNum)=="trainSet.knn$Attrition"] <- "Attrition"
 
-testNum <- testSet[ , sapply(testSet, is.numeric)]
+testNum <- testSet.knn[ , sapply(testSet.knn, is.numeric)]
 #add back Attrition
-testNum <- cbind(testNum,testSet$Attrition)
-names(testNum)[names(testNum)=="testSet$Attrition"] <- "Attrition"
+testNum <- cbind(testNum,testSet.knn$Attrition)
+names(testNum)[names(testNum)=="testSet.knn$Attrition"] <- "Attrition"
 
 for(i in 1:20)
 {
-  classifications <- kNN(Attrition ~ .,trainNum,testNum,norm=T,prob = TRUE, k = i)
+  classifications <- knn(trainNum[,1:12],testNum[,1:12],trainNum$Attrition,prob = TRUE, k = i)
   table(testNum$Attrition,classifications)
   CM <- confusionMatrix(table(testNum$Attrition,classifications))
   accs$accuracy[i] = CM$overall[1]
   accs$k[i] = i
+  sens$sensitivity[i] = CM$byClass[1]
+  sens$k[i] = i
 }
 
 plot(accs$k,accs$accuracy, type = "l", xlab = "k")
+plot(sens$k,sens$sensitivity, type = "l", xlab = "k")
 accs
-
+sens
+which.max(sens$sensitivity)
 ```
 
 # Run KNN
 ```{r}
-#k=5 had good accuracy, run model with k=5 and check sensitivity and specificity on test set
+#k=13 had good accuracy and sensitivity, run model with k=13 and check sensitivity and specificity on test set
 
-classifications <- kNN(Attrition ~ .,trainNum,testNum,norm=T,prob = TRUE, k = 5)
+classifications <- knn(trainNum[,1:12],testNum[,1:12],trainNum$Attrition,prob = TRUE, k = 13)
 table(testNum$Attrition,classifications)
 CM <- confusionMatrix(table(testNum$Attrition,classifications))
 CM
 ```
 
-We have overall accuracy at 84.5%, sensitivity at 86%, and specificity at 55%. Try again with k = 7
+We have overall accuracy at 84%, sensitivity at 60%, and specificity at 84%. Overall that's not too bad, but it only predicted "Yes" 3 times out of 41 actual yeses.
+
+Let's run with only the top suspected numeric variables.
 
 ```{r}
-classifications <- kNN(Attrition ~ .,trainNum,testNum,norm=T,prob = TRUE, k = 7)
-table(testNum$Attrition,classifications)
-CM <- confusionMatrix(table(testNum$Attrition,classifications))
-CM
-
+classifications_top <- kNN(Attrition ~ MonthlyIncome + TotalWorkingYears + YearsAtCompany,trainNum,testNum,prob = TRUE, k = 5)
+#table(testNum$Attrition,classifications_top)
+CM_top <- confusionMatrix(table(testNum$Attrition,classifications_top))
+CM_top
 
 ```
 
-Specificity is even worse. Let's move to Naive Bayes which will use all variables, not just the continuous ones.
+# KNN with caret
+
+```{r}
+## KNN with 10x cross validation repeated 5x
+fitControl <- trainControl(method="repeatedcv",
+                           repeats = 5,
+                           number=10,
+                           classProbs=T,
+                           summaryFunction=twoClassSummary)
+
+set.seed(1234)
+## evaluate on train set based on area under the ROC (AUC)
+KNN_caret <- train(Attrition ~.,
+             data=trainNum,
+             method="knn",
+             trControl=fitControl,
+             tuneGrid=expand.grid(.k=c(1,3,5,7,9,11,15,17)),
+             metric = "ROC")
+
+KNN_caret
+
+```
+
+Because we suspect the top contributing factors to be factors and not numeric variables, KNN is probably  not best model (but it is odd it had the exact same performance with just a few numeric variables). Let's move on to Naive Bayes which will use both numeric and factors.
 
 # Naive Bayes Classifier
 
 ```{r}
-#run model
+#run model on all variables
 NB1 = naiveBayes(Attrition~ .,data = trainSet)
 summary(NB1)
 
 #predict on the test set
-pred1 <- predict(NB1,testSet)
+pred1 <- predict(NB1,testSet, type = "raw")
 
 #confusion matrix
 confusionMatrix(table(predict(NB1,testSet),testSet$Attrition))
 
+summary(testSet$Attrition)
+summary(trainSet$Attrition)
+
 ```
 
-Our Naive Bayes classifier performs better (as expected, since it includes all of the variables and not just the continuous ones). Overall accuracy is 85% with sensitivity at 89% and specificity at 64%.
+Our Naive Bayes classifier performs really good in comparison to best KNN model. Overall accuracy is 84% with sensitivity at 86% and specificity at 73%. Of our total 41 yeses, it predicted 30 accurately.
+
+```{r}
+#check for different cut off for better performance
+preds_nb <- as.data.frame(pred1)
+
+preds_nb1 <- prediction(preds_nb[,2],testSet$Attrition)
+roc.perf_nb = performance(preds_nb1, measure = "tpr", x.measure = "fpr")
+auc.train_nb <- performance(preds_nb1, measure = "auc")
+auc.train_nb <- auc.train_nb@y.values
+plot(roc.perf_nb, colorize = TRUE)
+```
+```{r}
+#check metrics when cut-off = 0.4 instead of 0.5
+cutoff<-0.4
+class.nb<-factor(ifelse(pred1[,2]>cutoff,"Yes","No"))
+
+confusionMatrix(class.nb,testSet$Attrition)
+
+```
+
+Metrics improve slightly with cutoff at 0.4 instead of 0.5, with sens/spec both around 80%. This is our best model so far.
+
+```{r}
+#run model on top variables from EDA
+NB2 = naiveBayes(Attrition~ WorkLifeBalance + MonthlyIncome + JobLevel + JobRole + EnvironmentSatisfaction,data = trainSet)
+summary(NB2)
+
+#predict on the test set
+pred2 <- predict(NB2,testSet, type="raw")
+
+#confusion matrix
+confusionMatrix(table(predict(NB2,testSet),testSet$Attrition))
+
+```
+
+When we subset to what we suspected were the top variables, our specificity decreases to 34%.
+
+```{r}
+#check for different cut off for better performance
+preds_nb2 <- as.data.frame(pred2)
+
+preds_nb2 <- prediction(preds_nb2[,2],testSet$Attrition)
+roc.perf_nb2 = performance(preds_nb2, measure = "tpr", x.measure = "fpr")
+auc.train_nb2 <- performance(preds_nb2, measure = "auc")
+auc.train_nb2 <- auc.train_nb2@y.values
+plot(roc.perf_nb2, colorize = TRUE)
+```
+
+Maybe these are not in fact the top variables, as our sensitivity drops off with just these variables and our AUC goes down. 
+
+Let's try a Random Forest classifier which will also tell us variable importance.
+
+# Random Forest
+
+```{r}
+#run Random Forest using caret and cross validation
+
+rfGrid <- expand.grid(mtry=c(1, 5, 10, 50, 100, 250, 500))
+
+rfControl <- trainControl(method="repeatedcv",
+                          number=10,
+                          repeats = 3,
+                          classProbs=T,
+                          summaryFunction=twoClassSummary)
+
+fitRF <- train(Attrition ~.,
+               data = trainSet,
+               method="rf",
+               trControl=rfControl,
+               tuneGrid = rfGrid,
+               metric='ROC')
+
+fitRF
+
+varImp(fitRF)
+
+```
+Re-run Naive Bayes with top 10 variables per Random Forest model.
+
+```{r}
+#Naive Bayes
+NB3 = naiveBayes(Attrition~ MonthlyIncome + Age + TotalWorkingYears + DailyRate + OverTime + MonthlyRate + HourlyRate + PercentSalaryHike + DistanceFromHome + YearsAtCompany,data = trainSet)
+summary(NB3)
+
+#predict on the test set
+pred3 <- predict(NB3,testSet,type="raw")
+
+#confusion matrix
+confusionMatrix(table(predict(NB3,testSet),testSet$Attrition))
+
+
+```
+
+```{r}
+#check for different cut off for better performance
+preds_nb3 <- as.data.frame(pred3)
+
+preds_nb3 <- prediction(preds_nb3[,1],testSet$Attrition)
+roc.perf_nb3 = performance(preds_nb3, measure = "tpr", x.measure = "fpr")
+auc.train_nb3 <- performance(preds_nb3, measure = "auc")
+auc.train_nb3 <- auc.train_nb3@y.values
+plot(roc.perf_nb3, colorize = TRUE)
+```
+
+
+
+# Linear Regression for Monthly Salary
 
 ```{r}
 
