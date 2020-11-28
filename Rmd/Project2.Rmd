@@ -729,7 +729,7 @@ tibble(variable = names(colSums(is.na(attrition))),
 attrition[sapply(attrition, is.character)] <- lapply(attrition[sapply(attrition, is.character)], 
                                        as.factor)
 
-str(attrition)
+#str(attrition)
 ```
 
 ```{r}
@@ -758,7 +758,7 @@ attrition$WorkLifeBalance <- factor(attrition$WorkLifeBalance, ordered = TRUE)
 attrition <- attrition %>% dplyr::select(-c(EmployeeCount, Over18, StandardHours, EmployeeNumber))
 ```
 
-## Run model
+## Make Predictions
 ```{r}
 #predict on test set and check performance
 predict_attrition <- predict(final_class, newdata = attrition[,2:31])
@@ -770,12 +770,59 @@ attrition <- attrition %>% mutate(Attrition = predict_attrition)
 attrition <- attrition %>% select(c("ID","Attrition"))
 
 #save file
-Case2PredictionsBall_Attrition  <- write.csv(attrition, "data/Case2PredictionsBall_Attrition.csv", row.names = FALSE)
+Case2PredictionsBall_Attrition  <- write.csv(attrition, "Case2PredictionsBall_Attrition.csv", row.names = FALSE)
 ```
 
 
 ## Salary Predictor
 
 ```{r}
+#load in data
+salary <- read_csv(here::here("data", "CaseStudy2CompSet No Salary.csv"))
 
+#pre-process to match training set
+
+# Check for missing values
+tibble(variable = names(colSums(is.na(salary))),
+       missing = colSums(is.na(salary))) %>% 
+  gt() %>% 
+  tab_header(title = "Missing Values in Data") 
+
+#have to keep ID in for our prediction comparison, will exclude when running model
+```
+```{r}
+salary[sapply(salary, is.character)] <- lapply(salary[sapply(salary, is.character)], 
+                                       as.factor)
+
+#update other groups to factors
+salary[cols] <- lapply(salary[cols], factor) 
+
+salary$Education <- factor(salary$Education, ordered = TRUE)
+salary$EnvironmentSatisfaction <- factor(salary$EnvironmentSatisfaction, ordered = TRUE)
+salary$JobLevel <- factor(salary$JobLevel, ordered = TRUE)
+salary$JobSatisfaction <- factor(salary$JobSatisfaction, ordered = TRUE)
+salary$PerformanceRating <- factor(salary$PerformanceRating, ordered = TRUE)
+salary$RelationshipSatisfaction <- factor(salary$RelationshipSatisfaction, ordered = TRUE)
+salary$WorkLifeBalance <- factor(salary$WorkLifeBalance, ordered = TRUE)
+
+#str(salary)
+
+#remove unnecessary values, employee count, over18, and standard hours
+salary <- salary %>% dplyr::select(-c(EmployeeCount, Over18, StandardHours, EmployeeNumber))
+```
+
+## Make Predictions
+
+```{r}
+#predict on test set and check performance
+predict_salary <- predict(final_linear, newdata = salary[,2:31])
+
+#join back to original dataset
+salary <- salary %>% mutate(MonthlyIncome = exp(predict_salary))
+
+#remove all columns except ID
+salary <- salary %>% select(c("ID","MonthlyIncome"))
+
+#save file
+Case2PredictionsBall_Salary  <- write.csv(salary, "Case2PredictionsBall_Salary.csv", row.names = FALSE)
 ```
