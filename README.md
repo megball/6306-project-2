@@ -6,4 +6,4 @@
 
 <h2>Note</h2>
 - Please see 'predictions' folder for Attrition & Salary prediction files<br>
-- Powerpoint is located in 'ppt' file
+- Presentation is located in 'powerpoint' file
